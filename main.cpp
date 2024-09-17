@@ -26,8 +26,8 @@
 int main(int argc, char *argv[]){
 
 
-  printf("calcProtocol = %d bytes\n",sizeof(struct calcProtocol));
-  printf("calcMessage = %d bytes\n",sizeof(struct calcMessage));
+  printf("calcProtocol = %zu bytes\n",sizeof(struct calcProtocol));
+  printf("calcMessage = %zu bytes\n",sizeof(struct calcMessage));
   
   /* Initialize the library, this is needed for this library. */
   initCalcLib();
@@ -137,8 +137,8 @@ int main(int argc, char *argv[]){
   free(lineBuffer); // This is needed for the getline() as it will allocate memory (if the provided buffer is NUL).
 
 
-  printf("sizeof(struct calcProtocol)  = %d \n",sizeof(struct calcProtocol));
-  printf("sizeof(struct calcMessage)  = %d \n",sizeof(struct calcMessage));
+  printf("sizeof(struct calcProtocol)  = %zu \n",sizeof(struct calcProtocol));
+  printf("sizeof(struct calcMessage)  = %zu \n",sizeof(struct calcMessage));
   
 
 }
