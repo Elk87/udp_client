@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include "protocol.h"
 
@@ -15,15 +16,15 @@
 // Uncomment the next line to enable debug mode
 // #define DEBUG
 
-void send_message(int sockfd, struct sockaddr_in *server_addr, socklen_t addr_len, void *msg, size_t msg_len) {
-    if (sendto(sockfd, msg, msg_len, 0, (struct sockaddr *)server_addr, addr_len) < 0) {
+void send_message(int sockfd, struct sockaddr *server_addr, socklen_t addr_len, void *msg, size_t msg_len) {
+    if (sendto(sockfd, msg, msg_len, 0, server_addr, addr_len) < 0) {
         perror("ERROR: Sending message");
         exit(1);
     }
 }
 
-int receive_message(int sockfd, void *buffer, size_t buffer_size, struct sockaddr_in *server_addr, socklen_t *addr_len) {
-    int n = recvfrom(sockfd, buffer, buffer_size, 0, (struct sockaddr *)server_addr, addr_len);
+int receive_message(int sockfd, void *buffer, size_t buffer_size, struct sockaddr *server_addr, socklen_t *addr_len) {
+    int n = recvfrom(sockfd, buffer, buffer_size, 0, server_addr, addr_len);
     if (n < 0) {
         perror("ERROR: Receiving message");
     }
@@ -34,8 +35,8 @@ int main(int argc, char *argv[]) {
     int sockfd, retries = 0;
     struct sockaddr_in server_addr;
     socklen_t addr_len = sizeof(server_addr);
-    struct calcMessage message;
-    struct calcProtocol response;
+    struct calcMessage message;     // Use calcMessage structure from protocol.h
+    struct calcProtocol response;   // Use calcProtocol structure from protocol.h
 
     // Check for correct usage
     if (argc != 2) {
@@ -50,26 +51,36 @@ int main(int argc, char *argv[]) {
         printf("ERROR: Invalid input format. Expected <hostname>:<port>\n");
         return 1;
     }
+
     int port = atoi(port_str);
 
+    // Use getaddrinfo to resolve hostname
+    struct addrinfo hints, *res, *rp;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;  // IPv4
+    hints.ai_socktype = SOCK_DGRAM;  // UDP
+
+    int status = getaddrinfo(hostname, port_str, &hints, &res);
+    if (status != 0) {
+        fprintf(stderr, "ERROR: getaddrinfo: %s\n", gai_strerror(status));
+        return 1;
+    }
+
     // Create UDP socket
-    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        perror("ERROR: Cannot create socket");
-        return 1;
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sockfd == -1) continue;
+
+        if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1) break; // Success
+
+        close(sockfd);
     }
 
-    // Setup server address
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, hostname, &server_addr.sin_addr) <= 0) {
-        perror("ERROR: Invalid server IP address");
+    if (rp == NULL) {
+        fprintf(stderr, "ERROR: Could not connect to %s\n", hostname);
+        freeaddrinfo(res);
         return 1;
     }
-
-    // Set timeout for socket
-    struct timeval timeout = {TIMEOUT_SEC, 0};
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     // Prepare initial calcMessage
     message.type = htons(22); // Client to server, binary protocol
@@ -80,16 +91,21 @@ int main(int argc, char *argv[]) {
 
     printf("Host %s, and port %d.\n", hostname, port);
 
+    // Set timeout for socket
+    struct timeval timeout = {TIMEOUT_SEC, 0};
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
     // Send initial message with retries
     do {
-        send_message(sockfd, &server_addr, addr_len, &message, sizeof(message));
+        send_message(sockfd, rp->ai_addr, rp->ai_addrlen, &message, sizeof(message));
 
         // Wait for server response
-        int n = receive_message(sockfd, &response, sizeof(response), &server_addr, &addr_len);
+        int n = receive_message(sockfd, &response, sizeof(response), rp->ai_addr, &addr_len);
         if (n > 0) {
             if (ntohs(response.type) == 2 && ntohl(((struct calcMessage*)&response)->message) == 2) {
                 printf("ERROR: Server sent NOT OK message\n");
                 close(sockfd);
+                freeaddrinfo(res);
                 return 1;
             } else if (ntohs(response.type) == 1) {
                 break; // Received calcProtocol message
@@ -101,6 +117,7 @@ int main(int argc, char *argv[]) {
     if (retries > MAX_RETRIES) {
         printf("ERROR: Server did not reply\n");
         close(sockfd);
+        freeaddrinfo(res);
         return 1;
     }
 
@@ -141,6 +158,7 @@ int main(int argc, char *argv[]) {
         default:
             printf("ERROR: Unsupported operation\n");
             close(sockfd);
+            freeaddrinfo(res);
             return 1;
     }
 
@@ -159,12 +177,12 @@ int main(int argc, char *argv[]) {
         response.inResult = htonl(int_result);
     }
 
-    send_message(sockfd, &server_addr, addr_len, &response, sizeof(response));
+    send_message(sockfd, rp->ai_addr, rp->ai_addrlen, &response, sizeof(response));
 
     // Wait for server final response
     retries = 0;
     do {
-        int n = receive_message(sockfd, &message, sizeof(message), &server_addr, &addr_len);
+        int n = receive_message(sockfd, &message, sizeof(message), rp->ai_addr, &addr_len);
         if (n > 0 && ntohs(message.type) == 2) {
             if (ntohl(message.message) == 1) {
                 if (is_float_operation) {
@@ -190,5 +208,6 @@ int main(int argc, char *argv[]) {
     }
 
     close(sockfd);
+    freeaddrinfo(res);
     return 0;
 }
