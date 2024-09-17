@@ -33,8 +33,8 @@ int receive_message(int sockfd, void *buffer, size_t buffer_size, struct sockadd
 
 int main(int argc, char *argv[]) {
     int sockfd, retries = 0;
-    struct sockaddr_in server_addr;
-    socklen_t addr_len = sizeof(server_addr);
+    struct sockaddr_storage server_addr;  // Support for both IPv4 and IPv6
+    socklen_t addr_len;
     struct calcMessage message;     // Use calcMessage structure from protocol.h
     struct calcProtocol response;   // Use calcProtocol structure from protocol.h
 
@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
     // Use getaddrinfo to resolve hostname
     struct addrinfo hints, *res, *rp;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;  // IPv4
+    hints.ai_family = AF_UNSPEC;  // Allow both IPv4 and IPv6
     hints.ai_socktype = SOCK_DGRAM;  // UDP
 
     int status = getaddrinfo(hostname, port_str, &hints, &res);
@@ -100,7 +100,8 @@ int main(int argc, char *argv[]) {
         send_message(sockfd, rp->ai_addr, rp->ai_addrlen, &message, sizeof(message));
 
         // Wait for server response
-        int n = receive_message(sockfd, &response, sizeof(response), rp->ai_addr, &addr_len);
+        addr_len = rp->ai_addrlen; // Update addr_len to the actual size
+        int n = receive_message(sockfd, &response, sizeof(response), (struct sockaddr *)&server_addr, &addr_len);
         if (n > 0) {
             if (ntohs(response.type) == 2 && ntohl(((struct calcMessage*)&response)->message) == 2) {
                 printf("ERROR: Server sent NOT OK message\n");
@@ -182,7 +183,8 @@ int main(int argc, char *argv[]) {
     // Wait for server final response
     retries = 0;
     do {
-        int n = receive_message(sockfd, &message, sizeof(message), rp->ai_addr, &addr_len);
+        addr_len = rp->ai_addrlen; // Update addr_len to the actual size
+        int n = receive_message(sockfd, &message, sizeof(message), (struct sockaddr *)&server_addr, &addr_len);
         if (n > 0 && ntohs(message.type) == 2) {
             if (ntohl(message.message) == 1) {
                 if (is_float_operation) {
