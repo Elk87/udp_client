@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <errno.h>  // Include errno for error handling
 #include "protocol.h"
 
 #define BUFFER_SIZE 1024
@@ -26,13 +27,19 @@ void send_message(int sockfd, struct sockaddr *server_addr, socklen_t addr_len, 
 int receive_message(int sockfd, void *buffer, size_t buffer_size, struct sockaddr *server_addr, socklen_t *addr_len) {
     int n = recvfrom(sockfd, buffer, buffer_size, 0, server_addr, addr_len);
     if (n < 0) {
-        perror("ERROR: Receiving message");
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // Timeout occurred
+            return 0; // Indicate timeout
+        } else {
+            perror("ERROR: Receiving message");
+            return -1;
+        }
     }
     return n;
 }
 
 int main(int argc, char *argv[]) {
-    int sockfd, retries = 0;
+    int sockfd;
     struct sockaddr_storage server_addr;  // Support for both IPv4 and IPv6
     socklen_t addr_len;
     struct calcMessage message;     // Use calcMessage structure from protocol.h
@@ -96,11 +103,12 @@ int main(int argc, char *argv[]) {
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     // Send initial message with retries
+    int retries = 0;
     do {
         send_message(sockfd, rp->ai_addr, rp->ai_addrlen, &message, sizeof(message));
 
         // Wait for server response
-        addr_len = rp->ai_addrlen; // Update addr_len to the actual size
+        addr_len = sizeof(server_addr); // Update addr_len to the actual size
         int n = receive_message(sockfd, &response, sizeof(response), (struct sockaddr *)&server_addr, &addr_len);
         if (n > 0) {
             if (ntohs(response.type) == 2 && ntohl(((struct calcMessage*)&response)->message) == 2) {
@@ -111,12 +119,19 @@ int main(int argc, char *argv[]) {
             } else if (ntohs(response.type) == 1) {
                 break; // Received calcProtocol message
             }
+        } else if (n == 0) {
+            // Timeout occurred, increment retries
+            retries++;
+        } else {
+            // An actual error occurred
+            close(sockfd);
+            freeaddrinfo(res);
+            return 1;
         }
-        retries++;
     } while (retries <= MAX_RETRIES);
 
     if (retries > MAX_RETRIES) {
-        printf("ERROR: Server did not reply\n");
+        printf("ERROR TO\n");  // Modified to match test script
         close(sockfd);
         freeaddrinfo(res);
         return 1;
@@ -172,18 +187,23 @@ int main(int argc, char *argv[]) {
 #endif
 
     // Prepare and send calcProtocol response
+    response.type = htons(2); // Set type to 2
+    response.major_version = htons(1);
+    response.minor_version = htons(0);
+
     if (is_float_operation) {
         response.flResult = float_result; // No conversion needed for doubles
     } else {
         response.inResult = htonl(int_result);
     }
 
-    send_message(sockfd, rp->ai_addr, rp->ai_addrlen, &response, sizeof(response));
-
-    // Wait for server final response
+    // Send result to server with retries
     retries = 0;
     do {
-        addr_len = rp->ai_addrlen; // Update addr_len to the actual size
+        send_message(sockfd, rp->ai_addr, rp->ai_addrlen, &response, sizeof(response));
+
+        // Wait for server final response
+        addr_len = sizeof(server_addr); // Update addr_len to the actual size
         int n = receive_message(sockfd, &message, sizeof(message), (struct sockaddr *)&server_addr, &addr_len);
         if (n > 0 && ntohs(message.type) == 2) {
             if (ntohl(message.message) == 1) {
@@ -201,12 +221,19 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             }
+        } else if (n == 0) {
+            // Timeout occurred, increment retries
+            retries++;
+        } else {
+            // An actual error occurred
+            close(sockfd);
+            freeaddrinfo(res);
+            return 1;
         }
-        retries++;
     } while (retries <= MAX_RETRIES);
 
     if (retries > MAX_RETRIES) {
-        printf("ERROR: Server did not reply after sending result\n");
+        printf("ERROR TO\n");  // Modified to match test script
     }
 
     close(sockfd);
