@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <errno.h>  // Include errno for error handling
+#include <errno.h>  // error handling
 #include "protocol.h"
 
 #define BUFFER_SIZE 1024
@@ -131,7 +131,7 @@ int main(int argc, char *argv[]) {
     } while (retries <= MAX_RETRIES);
 
     if (retries > MAX_RETRIES) {
-        printf("ERROR TO\n");  // Modified to match test script
+        printf("ERROR TO\n"); 
         close(sockfd);
         freeaddrinfo(res);
         return 1;
@@ -192,7 +192,7 @@ int main(int argc, char *argv[]) {
     response.minor_version = htons(0);
 
     if (is_float_operation) {
-        response.flResult = float_result; // No conversion needed for doubles
+        response.flResult = float_result;
     } else {
         response.inResult = htonl(int_result);
     }
@@ -233,7 +233,7 @@ int main(int argc, char *argv[]) {
     } while (retries <= MAX_RETRIES);
 
     if (retries > MAX_RETRIES) {
-        printf("ERROR TO\n");  // Modified to match test script
+        printf("ERROR TO\n");  
     }
 
     close(sockfd);
